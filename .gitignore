@@ -37,3 +37,6 @@ data/raw/HomeAppliance/
 # Downloaded datasets (re-fetch with scripts/download_datasets.sh)
 data/raw/MyFixit/
 artifacts/ots_public/
+
+# Report drafting files (kept local)
+report_humanized/
