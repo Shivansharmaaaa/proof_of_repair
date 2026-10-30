@@ -19,7 +19,7 @@ artifacts/*.log
 artifacts/*.out
 artifacts/*.pid
 artifacts/*.sqlite3
-artifacts/chain_config.json
+artifacts/chain_config*.json
 artifacts/hardhat_node.log
 artifacts/vin_registry/
 
@@ -33,3 +33,7 @@ chain/artifacts/
 data/raw/CMAPSS/
 data/raw/HomeAppliance/
 *.zip
+
+# Downloaded datasets (re-fetch with scripts/download_datasets.sh)
+data/raw/MyFixit/
+artifacts/ots_public/

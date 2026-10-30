@@ -5,6 +5,7 @@
   const loaderText = $("#loaderText");
   const proofSection = $("#proof");
   const healthPill = $("#healthPill");
+  const dbPill = $("#dbPill");
   const chainPill = $("#chainPill");
   const otsPill = $("#otsPill");
   const pendingCount = $("#pendingCount");
@@ -18,11 +19,21 @@
   const vinTimeline = $("#vinTimeline");
   const vinTrust = $("#vinTrust");
   const vinHint = $("#vinHint");
+  const typeSwitch = $("#typeSwitch");
+
+  const TYPES = {
+    phone: { id: "IMEI (15 digits, dial *#06#)", idPh: "356938035643809", usage: "Battery cycles", code: "Error code (optional)", device: "Apple iPhone 6" },
+    car: { id: "VIN", idPh: "1HGBH41JXMN109186", usage: "Odometer (km)", code: "OBD-II DTC code", device: "2016 Honda Civic" },
+    appliance: { id: "Serial number", idPh: "KM110-CW4417", usage: "Usage cycles", code: "Display error code (e.g. OE, 5C, E24)", device: "Kenmore 110 Series Washing Machine" },
+  };
+  const UNIT = { km: "km", battery_cycles: "battery cycles", cycles: "cycles" };
 
   let lastProof = null;
   let pending = 0;
-  let lastChainTx = null;
   let lastLookupVin = "";
+  let demoCases = [];
+  let assetType = "phone";
+  let explorerAvailable = false;
 
   function setLoading(on, text) {
     loader.hidden = !on;
@@ -34,14 +45,57 @@
     return hex.length > n ? `${hex.slice(0, n)}…` : hex;
   }
 
-  function fillForm(caseData) {
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function setType(type) {
+    assetType = type;
+    form.elements.asset_type.value = type;
+    typeSwitch.querySelectorAll("button").forEach((b) => b.classList.toggle("active", b.dataset.type === type));
+    const t = TYPES[type];
+    $("#idLabel").textContent = t.id;
+    $("#usageLabel").textContent = t.usage;
+    $("#codeLabel").textContent = t.code;
+    form.elements.asset_id.placeholder = t.idPh;
+    form.elements.device.placeholder = t.device;
+    const tiny = engineSelect.querySelector('option[value="tinyllama"]');
+    tiny.disabled = type !== "car";
+    if (type !== "car") engineSelect.value = "multidomain";
+    renderChips();
+  }
+
+  typeSwitch.addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-type]");
+    if (b) setType(b.dataset.type);
+  });
+
+  function fillForm(c) {
+    if (c.asset_type !== assetType) setType(c.asset_type);
     const f = form.elements;
-    f.vin.value = caseData.vin || "";
-    f.vehicle.value = caseData.vehicle || "";
-    f.odometer_km.value = caseData.odometer_km ?? "";
-    f.dtc_codes.value = caseData.dtc_codes || "";
-    f.symptoms.value = caseData.symptoms || "";
-    f.sensor_notes.value = caseData.sensor_notes || "";
+    f.asset_id.value = c.asset_id || "";
+    f.device.value = c.device || "";
+    f.usage_value.value = c.usage_value ?? 0;
+    f.error_code.value = c.error_code || "";
+    f.issue.value = c.issue || "";
+    f.notes.value = c.notes || "";
+  }
+
+  function renderChips() {
+    demoChips.innerHTML = "";
+    demoCases
+      .filter((c) => c.asset_type === assetType)
+      .forEach((c) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.className = "chip";
+        b.textContent = c.label;
+        b.addEventListener("click", () => {
+          fillForm(c);
+          vinForm.elements.vin.value = c.asset_id || "";
+        });
+        demoChips.appendChild(b);
+      });
   }
 
   async function refreshHealth() {
@@ -49,42 +103,58 @@
       const res = await fetch("/api/health");
       const data = await res.json();
       const engines = data.engines || {};
-      healthPill.textContent = `api ok · tinyllama ${engines.tinyllama ? "ready" : "missing"} · mistral ${engines.mistral ? "ready" : "missing"} · ${data.storage?.backend || "db"}`;
+      healthPill.textContent = `api ok · mistral ${engines.multidomain_adapter ? "lora" : "base"} · tinyllama ${engines.tinyllama ? "ready" : "missing"}`;
       healthPill.classList.add("ok");
+      const st = data.storage || {};
+      dbPill.textContent = st.backend === "postgresql" ? `PostgreSQL · ${st.proofs} records · ${st.guides} guides` : `SQLite · ${st.proofs} records`;
+      dbPill.classList.toggle("live", st.backend === "postgresql");
       pending = data.pending_leaves || 0;
       pendingCount.textContent = `${pending} pending`;
-      if (!engines.mistral) {
-        const opt = engineSelect.querySelector('option[value="mistral"]');
-        if (opt) opt.disabled = true;
-      }
       const chain = data.chain || {};
-      if (chainPill) {
-        if (chain.mode === "live_evm") {
-          chainPill.textContent = `LIVE · ${chain.network} · id ${chain.chain_id} · ${short(chain.contract_address, 12)}`;
-          chainPill.classList.add("live");
-          chainPill.title = `RPC ${chain.rpc_url} | contract ${chain.contract_address} | block ${chain.block_number}`;
-        } else {
-          chainPill.textContent = `sim · ${chain.mode || "in_memory"}`;
-          chainPill.classList.remove("live");
+      if (chain.mode === "live_evm") {
+        const net = chain.network === "sepolia" ? "Ethereum Sepolia" : chain.network;
+        chainPill.textContent = `LIVE · ${net} · id ${chain.chain_id} · block ${chain.block_number}`;
+        chainPill.classList.add("live");
+        chainPill.title = `RPC ${chain.rpc_url} | contract ${chain.contract_address}`;
+        const link = $("#contractLink");
+        explorerAvailable = Boolean(chain.explorer_address);
+        if (chain.explorer_address) {
+          link.href = chain.explorer_address;
+          link.hidden = false;
         }
+      } else {
+        chainPill.textContent = `sim · ${chain.mode || "in_memory"}`;
+        chainPill.classList.remove("live");
       }
       const ots = data.ots || {};
-      if (otsPill) {
-        if (ots.mode === "live_ots") {
-          otsPill.textContent = "OTS live · pending→BTC";
-          otsPill.classList.add("live");
-          otsPill.title = (ots.calendars || []).join("\n") || ots.note || "";
-        } else {
-          otsPill.textContent = `OTS · ${ots.mode || "sim"}`;
-          otsPill.classList.remove("live");
-          otsPill.title = ots.note || "";
-        }
+      if (ots.mode === "live_ots") {
+        otsPill.textContent = "OTS live · Bitcoin";
+        otsPill.classList.add("live");
+        otsPill.title = (ots.calendars || []).join("\n") || ots.note || "";
+      } else {
+        otsPill.textContent = `OTS · ${ots.mode || "sim"}`;
+        otsPill.classList.remove("live");
+        otsPill.title = ots.note || "";
       }
     } catch (e) {
       healthPill.textContent = "api offline";
       healthPill.classList.remove("ok");
-      if (chainPill) chainPill.textContent = "chain offline";
-      if (otsPill) otsPill.textContent = "ots offline";
+      dbPill.textContent = "db offline";
+      chainPill.textContent = "chain offline";
+      otsPill.textContent = "ots offline";
+    }
+  }
+
+  async function loadKbCounts() {
+    try {
+      const res = await fetch("/api/kb_stats");
+      if (!res.ok) return;
+      const data = await res.json();
+      $("#kbPhone").textContent = (data.phone ?? 0).toLocaleString();
+      $("#kbCar").textContent = (data.car ?? 0).toLocaleString();
+      $("#kbAppliance").textContent = (data.appliance ?? 0).toLocaleString();
+    } catch (_) {
+      /* optional */
     }
   }
 
@@ -98,38 +168,32 @@
   }
 
   function trustLabel(summary, count, anchored) {
-    if (summary === "verified_timeline") {
-      return `VERIFIED · ${count} event(s) anchored on chain/OTS`;
-    }
-    if (summary === "partial") {
-      return `PARTIAL · ${anchored}/${count} anchored — seal remaining batch`;
-    }
-    if (summary === "sealed_only") {
-      return `SEALED · ${count} event(s) not yet batch-anchored`;
-    }
-    return "NO ATTESTATIONS · workshop has not sealed this VIN here";
+    if (summary === "verified_timeline") return `VERIFIED · ${count} repair(s) anchored on Ethereum + OpenTimestamps`;
+    if (summary === "partial") return `PARTIAL · ${anchored}/${count} anchored — remaining records not batched yet`;
+    if (summary === "sealed_only") return `SEALED · ${count} repair(s) not yet anchored`;
+    return "NO ATTESTATIONS · no workshop has sealed this device here";
   }
 
   async function lookupVin(vin, { scroll } = { scroll: true }) {
     const v = (vin || "").trim().toUpperCase();
-    if (v.length < 11) {
-      vinHint.textContent = "Enter a full VIN (11+ characters).";
+    if (v.length < 4) {
+      vinHint.textContent = "Enter a full IMEI, VIN or serial number.";
       return;
     }
     lastLookupVin = v;
-    setLoading(true, "Looking up VIN timeline…");
+    setLoading(true, "Looking up repair history…");
     try {
-      const res = await fetch(`/api/vin/${encodeURIComponent(v)}`);
+      const res = await fetch(`/api/asset/${encodeURIComponent(v)}`);
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
         throw new Error(err.detail || res.statusText);
       }
       const data = await res.json();
-      vinHint.textContent = `${data.vin} · ${data.count} attestation(s)`;
+      const kind = data.identifier_kind ? `${data.identifier_kind} ` : "";
+      vinHint.textContent = `${kind}${data.asset_id}${data.device ? " · " + data.device : ""} · ${data.count} sealed repair(s)`;
       vinTrust.hidden = false;
       vinTrust.className = `trust-banner ${data.trust_summary || "empty"}`;
       if (data.trust_summary === "verified_timeline") vinTrust.classList.add("verified");
-      if (data.trust_summary === "partial") vinTrust.classList.add("partial");
       vinTrust.textContent = trustLabel(data.trust_summary, data.count, data.anchored_count);
 
       vinTimeline.hidden = false;
@@ -138,34 +202,57 @@
         const item = document.createElement("article");
         item.className = `tl-item${ev.anchored ? " anchored" : ""}`;
         item.style.animationDelay = `${i * 0.06}s`;
-        const parts = (ev.parts || [])
-          .map((p) => `<li>${p}</li>`)
-          .join("");
-        const badge = ev.anchored
-          ? `<span class="tl-badge on">anchored</span>`
-          : `<span class="tl-badge">sealed</span>`;
+        const parts = (ev.parts || []).map((p) => `<li>${esc(p)}</li>`).join("");
+        const badge = ev.anchored ? `<span class="tl-badge on">anchored</span>` : `<span class="tl-badge">sealed</span>`;
+        const a = ev.anchor || {};
+        const tx = a.chain_tx
+          ? a.explorer_url
+            ? ` · tx <a href="${esc(a.explorer_url)}" target="_blank" rel="noreferrer">${esc(short(a.chain_tx, 14))}</a>`
+            : ` · tx ${esc(short(a.chain_tx, 14))}`
+          : "";
         item.innerHTML = `
           <div class="tl-head">
-            <span class="tl-code">${ev.fault_code || "—"}</span>
+            <span class="tl-code">${esc(ev.fault_code || "—")}</span>
             ${badge}
-            <span class="tl-meta">${formatWhen(ev.when)} · ${ev.odometer_km ?? "—"} km · ${ev.issuer_id || "workshop"}</span>
+            <span class="tl-meta">${esc(ev.asset_type)} · ${formatWhen(ev.when)} · ${esc(ev.usage_value ?? "—")} ${esc(UNIT[ev.usage_unit] || ev.usage_unit || "")} · ${esc(ev.issuer_id || "workshop")}</span>
           </div>
-          <p class="tl-body">${ev.diagnosis || ""}</p>
+          <p class="tl-body">${esc(ev.diagnosis || "")}</p>
           ${parts ? `<ul class="tl-parts">${parts}</ul>` : ""}
-          <p class="tl-meta" style="margin-top:0.45rem">leaf ${short(ev.leaf_digest, 20)}${ev.anchor?.merkle_root ? ` · root ${short(ev.anchor.merkle_root, 16)}` : ""}</p>
+          <p class="tl-meta" style="margin-top:0.45rem">leaf ${esc(short(ev.leaf_digest, 20))}${a.merkle_root ? ` · root ${esc(short(a.merkle_root, 16))}` : ""}${tx}${ev.reference_guide ? ` · grounded on ${esc(ev.reference_guide)}` : ""}</p>
+          <div class="tl-verify">
+            <button type="button" class="chip" data-proof="${esc(ev.proof_id)}">Verify stored record</button>
+            <span class="tl-result"></span>
+          </div>
         `;
+        item.querySelector("button[data-proof]").addEventListener("click", (e) => verifyStored(ev.proof_id, item.querySelector(".tl-result")));
         vinTimeline.appendChild(item);
       });
       if (!(data.timeline || []).length) {
-        vinTimeline.innerHTML = `<p class="hint">No sealed repairs for this VIN in the local registry.</p>`;
+        vinTimeline.innerHTML = `<p class="hint">No sealed repairs for this device in the registry.</p>`;
       }
-      if (scroll) {
-        document.getElementById("lookup").scrollIntoView({ behavior: "smooth" });
-      }
+      if (scroll) document.getElementById("lookup").scrollIntoView({ behavior: "smooth" });
     } catch (err) {
-      alert(`VIN lookup failed: ${err.message || err}`);
+      alert(`Lookup failed: ${err.message || err}`);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function verifyStored(proofId, out) {
+    out.textContent = "verifying…";
+    out.className = "tl-result";
+    try {
+      const res = await fetch(`/api/proofs/${encodeURIComponent(proofId)}/verify`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || res.statusText);
+      const failed = Object.entries(data).filter(([, v]) => v === false).map(([k]) => k);
+      out.textContent = data.all_ok
+        ? "INTACT · report hash, leaf, Merkle path and on-chain root all match"
+        : `TAMPERED / NOT PROVEN · failed: ${failed.join(", ")}`;
+      out.classList.add(data.all_ok ? "ok" : "bad");
+    } catch (err) {
+      out.textContent = `verify failed: ${err.message || err}`;
+      out.classList.add("bad");
     }
   }
 
@@ -177,24 +264,21 @@
   async function loadDemoCases() {
     try {
       const res = await fetch("/api/demo_cases");
-      const cases = await res.json();
-      demoChips.innerHTML = "";
-      cases.forEach((c, i) => {
-        const b = document.createElement("button");
-        b.type = "button";
-        b.className = "chip";
-        b.textContent = `${c.vehicle.split(" ").slice(-1)[0]} · ${c.dtc_codes}`;
-        b.addEventListener("click", () => {
-          fillForm(c);
-          vinForm.elements.vin.value = c.vin || "";
-          document.getElementById("inspect").scrollIntoView({ behavior: "smooth" });
-        });
-        demoChips.appendChild(b);
-        if (i === 0) window.__firstDemo = c;
-      });
+      demoCases = await res.json();
+      renderChips();
     } catch (_) {
       /* ignore */
     }
+  }
+
+  function fillList(sel, items) {
+    const el = $(sel);
+    el.innerHTML = "";
+    (items || []).forEach((s) => {
+      const li = document.createElement("li");
+      li.textContent = s;
+      el.appendChild(li);
+    });
   }
 
   function renderReport(payload) {
@@ -203,37 +287,37 @@
     const model = proof.model || {};
 
     proofSection.hidden = false;
+    $("#assetType").textContent = proof.asset_type || "—";
     $("#faultCode").textContent = report.fault_code || "—";
-    $("#severity").textContent = `severity · ${report.severity || "—"}`;
+    $("#severity").textContent = `severity · ${report.severity || "—"} · ~${report.estimated_minutes || "?"} min`;
     $("#diagnosis").textContent = report.diagnosis || "";
     $("#buyerAdvice").textContent = report.buyer_advice || "";
-    $("#reportMeta").textContent = `${proof.vehicle || ""} · VIN ${proof.vin || ""} · engine ${payload.engine || ""} · ${model.model_version || ""}`;
+    const unit = UNIT[proof.usage_unit] || proof.usage_unit || "";
+    $("#reportMeta").textContent = `${proof.device || ""} · ${proof.asset_id || ""} · ${proof.usage_value ?? ""} ${unit} · engine ${payload.engine || ""} (${model.model_version || ""}) · ${payload.seconds ?? "?"} s`;
+    fillList("#repairSteps", report.repair_steps);
+    fillList("#parts", report.parts);
+    fillList("#qaChecks", report.qa_checks);
 
-    const steps = $("#repairSteps");
-    steps.innerHTML = "";
-    (report.repair_steps || []).forEach((s) => {
-      const li = document.createElement("li");
-      li.textContent = s;
-      steps.appendChild(li);
-    });
-
-    const parts = $("#parts");
-    parts.innerHTML = "";
-    (report.parts || []).forEach((p) => {
-      const li = document.createElement("li");
-      li.textContent = p;
-      parts.appendChild(li);
-    });
+    const ref = payload.reference;
+    $("#refCard").hidden = !ref;
+    if (ref) {
+      $("#refLink").textContent = `${ref.title} — ${ref.source}`;
+      if (ref.url) $("#refLink").href = ref.url;
+      else $("#refLink").removeAttribute("href");
+      $("#refId").textContent = ref.ref_id;
+    }
 
     $("#leafDigest").textContent = proof.leaf_digest || "—";
     $("#reportHash").textContent = proof.report_hash || "—";
     $("#evidenceCid").textContent = proof.evidence_cid || "—";
-    $("#adapterHash").textContent = short(model.adapter_hash, 24);
+    $("#adapterHash").textContent = model.adapter_hash ? short(model.adapter_hash, 24) : "base model (no adapter)";
+    $("#storedIn").textContent = `repair_records · proof_id ${proof.proof_id}`;
 
     lastProof = proof;
     pending = payload.pending_batch_size ?? pending + 1;
     pendingCount.textContent = `${pending} pending`;
     btnVerify.disabled = !lastProof;
+    verifyGrid.hidden = true;
     proofSection.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -241,16 +325,17 @@
     e.preventDefault();
     const fd = new FormData(form);
     const body = {
-      vin: fd.get("vin").toString().trim(),
-      vehicle: fd.get("vehicle").toString().trim(),
-      odometer_km: Number(fd.get("odometer_km")),
-      symptoms: fd.get("symptoms").toString().trim(),
-      dtc_codes: fd.get("dtc_codes").toString().trim(),
-      sensor_notes: fd.get("sensor_notes").toString().trim(),
+      asset_type: fd.get("asset_type").toString(),
+      asset_id: fd.get("asset_id").toString().trim(),
+      device: fd.get("device").toString().trim(),
+      usage_value: Number(fd.get("usage_value")),
+      error_code: fd.get("error_code").toString().trim(),
+      issue: fd.get("issue").toString().trim(),
+      notes: fd.get("notes").toString().trim(),
       engine: fd.get("engine").toString(),
     };
 
-    setLoading(true, body.engine === "mistral" ? "Mistral diagnosing (can take a few minutes)…" : "Diagnosing & sealing proof…");
+    setLoading(true, body.engine === "multidomain" ? "Retrieving repair manual · Mistral-7B diagnosing…" : "TinyLlama diagnosing…");
     try {
       const res = await fetch("/api/diagnose_and_prove", {
         method: "POST",
@@ -259,15 +344,15 @@
       });
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.detail || res.statusText);
+        const detail = Array.isArray(err.detail) ? err.detail.map((d) => d.msg).join("; ") : err.detail;
+        throw new Error(detail || res.statusText);
       }
       const data = await res.json();
       renderReport(data);
-      $("#formHint").textContent = "Sealed to VIN. Anchor the batch, then buyer can look it up.";
-      if (body.vin) {
-        vinForm.elements.vin.value = body.vin;
-        lookupVin(body.vin, { scroll: false });
-      }
+      $("#formHint").textContent = "Sealed and stored in PostgreSQL. Anchor the batch so a buyer can verify it.";
+      vinForm.elements.vin.value = body.asset_id;
+      lookupVin(body.asset_id, { scroll: false });
+      refreshHealth();
     } catch (err) {
       alert(`Diagnosis failed: ${err.message || err}`);
     } finally {
@@ -276,7 +361,16 @@
   });
 
   btnAnchor.addEventListener("click", async () => {
-    setLoading(true, "Anchoring Merkle batch…");
+    // Public chain: open the explorer tab inside the click (so it is not blocked as a pop-up),
+    // then point it at the transaction once it is mined.
+    const explorerTab = explorerAvailable ? window.open("", "_blank") : null;
+    if (explorerTab) {
+      explorerTab.document.title = "Waiting for Ethereum…";
+      explorerTab.document.body.innerHTML =
+        '<p style="font:16px system-ui;margin:3rem">Sending the Merkle root to Ethereum Sepolia… ' +
+        "this tab opens the transaction on Etherscan as soon as it is in a block (~15 s).</p>";
+    }
+    setLoading(true, "Building Merkle tree · sending Ethereum transaction · OpenTimestamps…");
     try {
       const res = await fetch("/api/anchor_batch", {
         method: "POST",
@@ -289,32 +383,37 @@
       }
       const data = await res.json();
       anchorPlate.hidden = false;
-      $("#merkleRoot").textContent = data.merkle_root || "—";
-      $("#otsId").textContent = data.ots_receipt?.receipt_id || "—";
+      $("#merkleRoot").textContent = `${data.merkle_root || "—"}  (${(data.leaf_order || []).length} records)`;
       const ots = data.ots_receipt || {};
       if (ots.mode === "live_ots") {
         const cal = (ots.pending_calendars && ots.pending_calendars[0]) || ots.calendar_url || "";
         $("#otsId").textContent = `${ots.receipt_id} · ${ots.status}${cal ? " · " + cal.replace(/^https?:\/\//, "") : ""}`;
-        $("#otsId").title = ots.ots_file || "";
+      } else {
+        $("#otsId").textContent = ots.receipt_id ? `${ots.receipt_id} · simulated` : "—";
       }
+      const files = data.ots_files;
+      $("#otsFiles").textContent = files
+        ? `${files.bin.split("/").pop()}  +  ${files.ots.split("/").pop()}`
+        : "not generated (timestamp simulator or receipt missing)";
       const tx = data.chain_tx || {};
-      const txHash = tx.tx_hash || tx || "—";
-      $("#chainTx").textContent = typeof txHash === "string" ? txHash : JSON.stringify(txHash);
-      lastChainTx = tx;
+      const txHash = tx.tx_hash || "—";
       if (tx.explorer_url) {
-        $("#chainTx").innerHTML = `<a href="${tx.explorer_url}" target="_blank" rel="noreferrer">${tx.tx_hash}</a>`;
+        $("#chainTx").innerHTML = `<a href="${esc(tx.explorer_url)}" target="_blank" rel="noreferrer">${esc(txHash)}</a>`;
+        if (explorerTab) explorerTab.location.href = tx.explorer_url;
+      } else {
+        $("#chainTx").textContent = txHash;
+        if (explorerTab) explorerTab.close();
       }
-      if (tx.mode === "live_evm") {
-        $("#formHint").textContent = `Anchored on ${tx.network} (chainId ${tx.chain_id}) in block ${tx.block_number}.`;
-      }
+      $("#chainBlock").textContent = tx.mode === "live_evm"
+        ? `${tx.network === "sepolia" ? "Ethereum Sepolia testnet" : tx.network} · chainId ${tx.chain_id} · block ${tx.block_number} · contract ${tx.contract_address}`
+        : "in-memory simulator";
       pending = 0;
       pendingCount.textContent = "0 pending";
       btnVerify.disabled = !lastProof;
       refreshHealth();
-      if (lastLookupVin || lastProof?.vin) {
-        lookupVin(lastLookupVin || lastProof.vin, { scroll: false });
-      }
+      if (lastLookupVin || lastProof?.asset_id) lookupVin(lastLookupVin || lastProof.asset_id, { scroll: false });
     } catch (err) {
+      if (explorerTab) explorerTab.close();
       alert(`Anchor failed: ${err.message || err}`);
     } finally {
       setLoading(false);
@@ -323,7 +422,7 @@
 
   btnVerify.addEventListener("click", async () => {
     if (!lastProof) return;
-    setLoading(true, "Verifying proof…");
+    setLoading(true, "Re-hashing record · checking Merkle path · querying smart contract…");
     try {
       const res = await fetch("/api/verify", {
         method: "POST",
@@ -338,6 +437,7 @@
       verifyGrid.hidden = false;
       verifyGrid.innerHTML = "";
       Object.entries(data).forEach(([k, v]) => {
+        if (typeof v !== "boolean") return;
         const el = document.createElement("div");
         el.className = `v-item ${v ? "ok" : "bad"}`;
         el.textContent = `${k}: ${v ? "PASS" : "FAIL"}`;
@@ -350,7 +450,9 @@
     }
   });
 
+  setType("phone");
   refreshHealth();
   loadDemoCases();
-  setInterval(refreshHealth, 15000);
+  loadKbCounts();
+  setInterval(refreshHealth, 60000);
 })();

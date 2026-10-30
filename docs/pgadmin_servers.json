@@ -1,0 +1,13 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "Proof of Repair (local PostgreSQL 15)",
+      "Group": "Servers",
+      "Host": "localhost",
+      "Port": 5432,
+      "MaintenanceDB": "proof_of_repair",
+      "Username": "shivansh",
+      "SSLMode": "prefer"
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "domain": "phones_cars_appliances_proof_of_repair",
+  "seed": 42,
+  "knowledge_base": {
+    "total": 4666,
+    "by_type": {
+      "phone": 3682,
+      "appliance": 609,
+      "car": 375
+    },
+    "by_source": {
+      "iFixit (MyFixit)": 4577,
+      "MechanicDB": 89
+    }
+  },
+  "train": 1625,
+  "valid": 70,
+  "test": 70,
+  "dataset_merkle_root": "813f4a55e7e1eb2a1971d2718fb729a146554e146826d3cbd1ad7e4c5acb3368",
+  "datasets": [
+    "MyFixit (iFixit) Phone/Appliance/Car and Truck",
+    "MechanicDB OBD-II",
+    "NHTSA complaints"
+  ]
+}

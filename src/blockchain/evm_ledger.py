@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -17,6 +18,19 @@ def _normalize_root(root_hex: str) -> bytes:
     if len(h) != 64:
         raise ValueError("merkle root must be 32-byte hex")
     return bytes.fromhex(h)
+
+
+def _env_value(name: str) -> str:
+    """Read a secret from the environment, else from the project's .env (never from config files)."""
+    if os.environ.get(name):
+        return os.environ[name]
+    env_file = ROOT / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            key, _, value = line.partition("=")
+            if key.strip() == name:
+                return value.strip()
+    return ""
 
 
 def _to_tx_hex(tx_hash) -> str:
@@ -69,7 +83,7 @@ class Web3Ledger:
             self.from_address = accounts[0]
             self._sign_mode = "unlocked"
         else:
-            pk = self.config.get("private_key") or ""
+            pk = self.config.get("private_key") or _env_value("DEPLOYER_PRIVATE_KEY")
             if not pk.startswith("0x"):
                 pk = "0x" + pk
             self.account = self.w3.eth.account.from_key(pk)
@@ -95,18 +109,26 @@ class Web3Ledger:
             ),
         }
 
+    def _gas_limit(self, fn) -> int:
+        """Estimate per transaction: public networks price storage differently from a local node."""
+        try:
+            return int(fn.estimate_gas({"from": self.from_address}) * 1.3) + 10_000
+        except Exception:
+            return 3_000_000
+
     def _send(self, fn) -> Any:
+        gas = self._gas_limit(fn)
         if self._sign_mode == "unlocked":
-            tx_hash = fn.transact({"from": self.from_address, "gas": 500_000})
+            tx_hash = fn.transact({"from": self.from_address, "gas": gas})
             return self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=180)
 
-        nonce = self.w3.eth.get_transaction_count(self.from_address)
+        nonce = self.w3.eth.get_transaction_count(self.from_address, "pending")
         tx = fn.build_transaction(
             {
                 "from": self.from_address,
                 "nonce": nonce,
                 "chainId": self.chain_id,
-                "gas": 500_000,
+                "gas": gas,
             }
         )
         try:
@@ -171,8 +193,9 @@ class Web3Ledger:
 
 
 def load_ledger(config_path: Path | None = None):
-    """Prefer live EVM config; fall back to in-memory simulator."""
-    path = config_path or DEFAULT_CONFIG
+    """Prefer live EVM config (CHAIN_CONFIG env overrides); fall back to in-memory simulator."""
+    env_path = os.environ.get("CHAIN_CONFIG")
+    path = config_path or (Path(env_path) if env_path else DEFAULT_CONFIG)
     if path.exists():
         try:
             return Web3Ledger(path)

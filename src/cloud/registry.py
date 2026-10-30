@@ -19,6 +19,8 @@ def norm_vin(vin: str) -> str:
 
 
 class VinRegistry:
+    backend = "sqlite"
+
     def __init__(self, db_path: str | Path):
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -120,9 +122,9 @@ class VinRegistry:
                 """,
                 {
                     "proof_id": por["proof_id"],
-                    "vin": norm_vin(por.get("vin", "")),
-                    "vehicle": por.get("vehicle"),
-                    "odometer_km": por.get("odometer_km"),
+                    "vin": norm_vin(por.get("asset_id") or por.get("vin", "")),
+                    "vehicle": por.get("device") or por.get("vehicle"),
+                    "odometer_km": por.get("usage_value", por.get("odometer_km")),
                     "event_type": por.get("event_type"),
                     "issuer_id": por.get("issuer_id"),
                     "timestamp": por.get("timestamp"),
@@ -188,6 +190,7 @@ class VinRegistry:
         ots_receipt: Optional[Dict[str, Any]] = None,
         chain_tx: Optional[Dict[str, Any]] = None,
         meta: Optional[Dict[str, Any]] = None,
+        merkle_proofs: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         ots = ots_receipt or {}
         chain = chain_tx if isinstance(chain_tx, dict) else {}
@@ -303,8 +306,12 @@ class VinRegistry:
                 {
                     "proof_id": p.get("proof_id"),
                     "when": p.get("timestamp"),
-                    "vehicle": p.get("vehicle"),
-                    "odometer_km": p.get("odometer_km"),
+                    "vehicle": p.get("device") or p.get("vehicle"),
+                    "odometer_km": p.get("usage_value", p.get("odometer_km")),
+                    "asset_type": p.get("asset_type", "car"),
+                    "device": p.get("device") or p.get("vehicle"),
+                    "usage_value": p.get("usage_value", p.get("odometer_km")),
+                    "usage_unit": p.get("usage_unit", "km"),
                     "issuer_id": p.get("issuer_id"),
                     "event_type": p.get("event_type"),
                     "fault_code": report.get("fault_code"),
@@ -319,6 +326,7 @@ class VinRegistry:
                 }
             )
         return {
+            "asset_id": vin_n,
             "vin": vin_n,
             "count": len(timeline),
             "anchored_count": sum(1 for e in timeline if e["anchored"]),
@@ -334,6 +342,11 @@ class VinRegistry:
             ),
             "storage": "sqlite",
         }
+
+    asset_timeline = vin_timeline
+
+    def merkle_proof_for_leaf(self, leaf_digest: str) -> Optional[Dict[str, Any]]:
+        return None
 
     def stats(self) -> Dict[str, Any]:
         with self._connect() as conn:

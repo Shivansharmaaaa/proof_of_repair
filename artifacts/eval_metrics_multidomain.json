@@ -1,0 +1,32 @@
+{
+  "model": "mistral-7b-instruct-4bit + multidomain LoRA",
+  "test_examples": 30,
+  "seconds_per_example": 13.1,
+  "overall": {
+    "json_valid": 96.7,
+    "all_keys": 96.7,
+    "fault_code_exact": 86.7,
+    "severity_match": 63.3,
+    "steps_3_to_6": 63.3
+  },
+  "by_type": {
+    "appliance": {
+      "n": 10,
+      "json_valid": 100.0,
+      "fault_code_exact": 100.0,
+      "severity_match": 80.0
+    },
+    "car": {
+      "n": 10,
+      "json_valid": 100.0,
+      "fault_code_exact": 90.0,
+      "severity_match": 50.0
+    },
+    "phone": {
+      "n": 10,
+      "json_valid": 90.0,
+      "fault_code_exact": 70.0,
+      "severity_match": 60.0
+    }
+  }
+}

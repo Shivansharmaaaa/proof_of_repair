@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>PROOF OF REPAIR — VIN attestation registry</title>
+  <title>PROOF OF REPAIR — phones · cars · appliances</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -22,20 +22,27 @@
       <a href="#anchor">Anchor</a>
     </nav>
     <div class="status-pill" id="healthPill">checking…</div>
+    <div class="status-pill db" id="dbPill">db…</div>
     <div class="status-pill chain" id="chainPill">chain…</div>
     <div class="status-pill ots" id="otsPill">ots…</div>
   </header>
 
   <main>
     <section class="hero" id="top">
-      <p class="eyebrow">VIN-bound repair attestation registry</p>
+      <p class="eyebrow">Cloud repair attestation · phones · cars · appliances</p>
       <h1 class="brand">PROOF<br />OF REPAIR</h1>
       <p class="lede">
-        Workshops seal what was fixed, when, and on which VIN.
-        Buyers, dealers, and insurers look up the timeline — not a PDF story.
+        Workshops seal what was fixed, when, and on which device: IMEI, VIN or serial number.
+        A fine-tuned LLM writes the report from real repair manuals; the record is hashed,
+        stored in PostgreSQL and anchored on Ethereum and Bitcoin (OpenTimestamps).
       </p>
+      <div class="type-tiles">
+        <div class="tile"><span>Phones</span><b id="kbPhone">—</b><small>iFixit guides</small></div>
+        <div class="tile"><span>Cars</span><b id="kbCar">—</b><small>iFixit + OBD-II codes</small></div>
+        <div class="tile"><span>Appliances</span><b id="kbAppliance">—</b><small>iFixit guides</small></div>
+      </div>
       <div class="cta-row">
-        <a class="btn primary" href="#lookup">Check a VIN</a>
+        <a class="btn primary" href="#lookup">Check a device</a>
         <a class="btn ghost" href="#inspect">Workshop bay</a>
       </div>
     </section>
@@ -43,16 +50,16 @@
     <section class="panel" id="lookup">
       <div class="section-head">
         <h2>00 · Buyer / dealer lookup</h2>
-        <p>Paste a VIN to see sealed repair events and whether they were anchored on-chain.</p>
+        <p>Paste an IMEI, VIN or appliance serial number to see sealed repairs and whether they were anchored on-chain.</p>
       </div>
       <form id="vinForm" class="vin-form">
         <label class="vin-field">
-          <span>VIN</span>
-          <input name="vin" required minlength="11" maxlength="32" placeholder="1HGBH41JXMN109186" autocomplete="off" />
+          <span>IMEI / VIN / Serial number</span>
+          <input name="vin" required minlength="4" maxlength="40" placeholder="356938035643809" autocomplete="off" />
         </label>
-        <button type="submit" class="btn primary">Lookup timeline</button>
+        <button type="submit" class="btn primary">Lookup history</button>
       </form>
-      <p class="hint" id="vinHint">Empty VIN = no attested repairs in this registry yet.</p>
+      <p class="hint" id="vinHint">No sealed repairs in the registry for a device = nothing to trust yet.</p>
       <div id="vinTrust" class="trust-banner" hidden></div>
       <div id="vinTimeline" class="timeline" hidden></div>
     </section>
@@ -60,51 +67,58 @@
     <section class="panel" id="inspect">
       <div class="section-head">
         <h2>01 · Workshop bay</h2>
-        <p>Mechanic posts a repair attestation: diagnose, seal evidence to the VIN, then batch-anchor.</p>
+        <p>Technician records a repair: pick the device type, describe the fault, and seal the report to the device identifier.</p>
+      </div>
+
+      <div class="type-switch" role="tablist" id="typeSwitch">
+        <button type="button" role="tab" data-type="phone" class="active">Phone</button>
+        <button type="button" role="tab" data-type="car">Car</button>
+        <button type="button" role="tab" data-type="appliance">Appliance</button>
       </div>
 
       <form id="diagForm" class="inspect-form">
+        <input type="hidden" name="asset_type" value="phone" />
         <div class="field-row">
           <label>
-            <span>VIN</span>
-            <input name="vin" required minlength="11" maxlength="32" placeholder="1HGBH41JXMN109186" autocomplete="off" />
+            <span id="idLabel">IMEI</span>
+            <input name="asset_id" required minlength="4" maxlength="40" placeholder="356938035643809" autocomplete="off" />
           </label>
           <label>
-            <span>Vehicle</span>
-            <input name="vehicle" required placeholder="2016 Honda Civic" />
+            <span>Device (make &amp; model)</span>
+            <input name="device" required placeholder="Apple iPhone 6" />
           </label>
         </div>
         <div class="field-row">
           <label>
-            <span>Odometer (km)</span>
-            <input name="odometer_km" type="number" min="0" required value="98000" />
+            <span id="usageLabel">Battery cycles</span>
+            <input name="usage_value" type="number" min="0" required value="0" />
           </label>
           <label>
-            <span>DTC codes</span>
-            <input name="dtc_codes" placeholder="P0420" />
+            <span id="codeLabel">Error code (optional)</span>
+            <input name="error_code" placeholder="—" />
           </label>
           <label>
             <span>Engine</span>
             <select name="engine" id="engineSelect">
-              <option value="tinyllama" selected>TinyLlama LoRA (fast)</option>
-              <option value="mistral">Mistral 4-bit MLX</option>
+              <option value="multidomain" selected>Mistral-7B + LoRA (phones · cars · appliances)</option>
+              <option value="tinyllama">TinyLlama LoRA (cars only, fast)</option>
             </select>
           </label>
         </div>
         <label class="full">
-          <span>Symptoms</span>
-          <textarea name="symptoms" rows="3" required placeholder="CEL on, sulfur smell, failed emissions…"></textarea>
+          <span>Reported issue</span>
+          <textarea name="issue" rows="3" required placeholder="Battery drains very fast and the phone shuts down at 20%…"></textarea>
         </label>
         <label class="full">
-          <span>Sensor notes</span>
-          <textarea name="sensor_notes" rows="2" placeholder="rear O2 lazy…"></textarea>
+          <span>Technician notes</span>
+          <textarea name="notes" rows="2" placeholder="Battery health 71%…"></textarea>
         </label>
 
         <div class="demo-chips" id="demoChips" aria-label="Demo cases"></div>
 
         <div class="form-actions">
-          <button type="submit" class="btn primary" id="btnDiagnose">Seal repair to VIN</button>
-          <p class="hint" id="formHint">First run loads the model (~30–90s on Apple Silicon).</p>
+          <button type="submit" class="btn primary" id="btnDiagnose">Seal repair to device</button>
+          <p class="hint" id="formHint">First run loads Mistral-7B (~20 s); each diagnosis then takes ~15–40 s on Apple Silicon.</p>
         </div>
       </form>
     </section>
@@ -116,33 +130,43 @@
       </div>
       <div class="report-grid">
         <div class="stamp">
+          <div class="stamp-type" id="assetType">—</div>
           <div class="stamp-code" id="faultCode">—</div>
           <div class="stamp-sev" id="severity">—</div>
         </div>
         <div class="report-body">
           <h3>Diagnosis</h3>
           <p id="diagnosis"></p>
-          <h3>Buyer advice</h3>
-          <p id="buyerAdvice"></p>
           <h3>Repair steps</h3>
           <ol id="repairSteps"></ol>
           <h3>Parts</h3>
           <ul id="parts"></ul>
+          <h3>QA checks</h3>
+          <ul id="qaChecks"></ul>
+          <h3>Buyer advice</h3>
+          <p id="buyerAdvice"></p>
         </div>
       </div>
 
+      <div class="ref-card" id="refCard" hidden>
+        <span>Grounded on</span>
+        <a id="refLink" target="_blank" rel="noreferrer"></a>
+        <code id="refId"></code>
+      </div>
+
       <div class="hash-plate">
-        <div><span>Leaf</span><code id="leafDigest"></code></div>
-        <div><span>Report hash</span><code id="reportHash"></code></div>
+        <div><span>Leaf digest</span><code id="leafDigest"></code></div>
+        <div><span>Report hash (SHA-256)</span><code id="reportHash"></code></div>
         <div><span>Evidence CID</span><code id="evidenceCid"></code></div>
-        <div><span>Adapter</span><code id="adapterHash"></code></div>
+        <div><span>Model adapter</span><code id="adapterHash"></code></div>
+        <div><span>Stored in</span><code id="storedIn"></code></div>
       </div>
     </section>
 
     <section class="panel" id="anchor">
       <div class="section-head">
         <h2>03 · Anchor &amp; verify</h2>
-        <p>Publish the Merkle root to OTS + EVM so a second-hand buyer can trust the VIN timeline.</p>
+        <p>Batch sealed records into one Merkle root and publish it to Ethereum (smart contract) and Bitcoin (OpenTimestamps).</p>
       </div>
       <div class="anchor-actions">
         <button type="button" class="btn primary" id="btnAnchor">Anchor pending batch</button>
@@ -151,8 +175,10 @@
       </div>
       <div class="hash-plate" id="anchorPlate" hidden>
         <div><span>Merkle root</span><code id="merkleRoot"></code></div>
-        <div><span>OTS receipt</span><code id="otsId"></code></div>
-        <div><span>Chain tx</span><code id="chainTx"></code></div>
+        <div><span>Ethereum transaction</span><code id="chainTx"></code></div>
+        <div><span>Network · block</span><code id="chainBlock"></code></div>
+        <div><span>OpenTimestamps receipt</span><code id="otsId"></code></div>
+        <div><span>Files for opentimestamps.org (artifacts/ots_public)</span><code id="otsFiles">—</code></div>
       </div>
       <div class="verify-grid" id="verifyGrid" hidden></div>
     </section>
@@ -166,8 +192,11 @@
   </div>
 
   <footer>
-    <span>VIN repair attestation · workshop seals · buyer verifies</span>
-    <a href="/docs" target="_blank" rel="noreferrer">API docs</a>
+    <span>Data: iFixit (MyFixit, CC BY-NC-SA) · MechanicDB OBD-II · NHTSA complaints</span>
+    <span>
+      <a href="#" id="contractLink" target="_blank" rel="noreferrer" hidden>Smart contract</a>
+      <a href="/docs" target="_blank" rel="noreferrer">API docs</a>
+    </span>
   </footer>
 
   <script src="/assets/app.js"></script>
